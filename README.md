@@ -9,6 +9,7 @@ This repository provides a Python script to calculate the FRAGILE score from cfD
 - Python 3
 - Pandas
 - Numpy
+- argparse
 
 ## Usage
 1. Clone the repository to your local machine:
