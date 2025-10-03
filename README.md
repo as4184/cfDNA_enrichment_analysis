@@ -109,7 +109,7 @@ with columns:
 
 ### FRAGILE.e (fragment end-sequence component)
 Build A/T/G/C counts at positions `L1 to L7, R1 to R7` for the context and the whole genome baseline, normalize per position, and sum:
-- $\mathrm{FRAGILE}.e\ \mathrm{score}=\sum_{i=1}^{14}\sum_{j=1}^{4}P_{i,j}(k)\ln\left(\frac{P_{i,j}(k)}{q_{i,j}}\right)$
+- $\mathrm{FRAGILE}.e\ \mathrm{score}=\sum_{i=1}^{14}\sum_{j=1}^{4}P_{i,j}(k)\log_{2}\left(\frac{P_{i,j}(k)}{q_{i,j}}\right)$
 
 
 ## Citation
