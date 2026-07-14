@@ -64,7 +64,7 @@ def filter_autosomes_X(df: pd.DataFrame) -> pd.DataFrame:
 def ensure_length_1based_inclusive(df: pd.DataFrame) -> pd.DataFrame:
     """Calculate fragment length using len = (end - start) + 1 for 0-based half-open coordinates."""
     df = df.copy()
-    df["len"] = (df["end"].astype(int) - df["start"].astype(int)) + 1
+    df["len"] = (df["end"].astype(int) - df["start"].astype(int))
     return df
 
 def numeric_probs(df: pd.DataFrame) -> pd.DataFrame:
