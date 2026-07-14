@@ -276,7 +276,7 @@ def write_size_gc_summary(df: pd.DataFrame, outpath: str):
 def run_bedtools_intersect(a_file: str, b_file: str, bedtools_bin: str, out_file: str):
     """Run: bedtools intersect -wa -a <a_file> -b <b_file> > <out_file>"""
     with open(out_file, "w") as outfh:
-        subprocess.run([bedtools_bin, "intersect", "-wa", "-a", a_file, "-b", b_file],
+        subprocess.run([bedtools_bin, "intersect", "-u", "-a", a_file, "-b", b_file],
                        check=True, stdout=outfh)
 
 def read_frag_file_from_dataframe(df_in: pd.DataFrame) -> pd.DataFrame:
