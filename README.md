@@ -89,11 +89,11 @@ with columns:
 - **FRAGILE.e**
 
 ## Brief Method
-- **Length binning (60 bins total)**:
-  - bin 0: `<50`
-  - bins 1–59: `50–349` in 5-bp steps
-  - bin 59: `≥350`
-
+- **Length binning (62 bins total)**:
+  - bin 0: `<50 bp`
+  - bins 1–60: `50–349 bp` in 5-bp intervals
+  - bin 61: `≥350 bp`
+  
 - **GC binning (50 bins total)**:
   - divide `[0,1]` into 50 bins of width `0.02`
   - for a GC fraction `g` in `[0,1]`, the bin index is `b = min(49, floor(50*g))`
