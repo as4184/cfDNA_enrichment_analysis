@@ -62,7 +62,7 @@ def filter_autosomes_X(df: pd.DataFrame) -> pd.DataFrame:
     return df.loc[keep]
 
 def ensure_length_1based_inclusive(df: pd.DataFrame) -> pd.DataFrame:
-    """Calculate fragment length using len = (end - start) + 1 for 0-based half-open coordinates."""
+    """Calculate fragment length as end - start for 0-based, half-open BED coordinates."""
     df = df.copy()
     df["len"] = (df["end"].astype(int) - df["start"].astype(int))
     return df
@@ -76,19 +76,35 @@ def numeric_probs(df: pd.DataFrame) -> pd.DataFrame:
 
 def gc_size_distributions(df: pd.DataFrame):
     """
-    Build empirical probability distributions:
-      • Length: 60 bins total. bin 0: fragments with <50 bp length, bins 1 to 59: 5-bp bins for fragments with length 50 to 349 bp, bin 59: ≥350 bp
-      • GC: 50 bins over gc fraction of 0.00 to 1.00
-    Returns (size_prob[60], gc_prob[50]).
+    Build genome-wide empirical probability distributions.
+
+    Length bins (62 total):
+      0:      <50 bp
+      1-60:   50-349 bp, in 5-bp bins
+      61:     >=350 bp
+
+    GC bins (50 total):
+      0-49:   GC fractions in 2% intervals
+
+    Returns size_prob and gc_prob.
     """
-    n = len(df) if len(df) else 1
+    n = len(df)
+    if n == 0:
+        raise ValueError("Cannot calculate probabilities from an empty dataset")
 
-    L = df["len"].to_numpy()
-    size_idx = np.where(L < 50, 0,
-                np.where(L >= 350, 59, ((L - 50)//5) + 1)).astype(int)
-    size_prob = np.bincount(size_idx, minlength=60) / n
+    L = df["len"].to_numpy(dtype=int)
+    size_idx = np.where(
+        L < 50,
+        0,
+        np.where(L >= 350, 61, ((L - 50) // 5) + 1)
+    ).astype(int)
 
-    G = np.clip(np.floor(df["gc"].to_numpy() * 50).astype(int), 0, 49)
+    size_prob = np.bincount(size_idx, minlength=62) / n
+
+    G = np.clip(
+        np.floor(df["gc"].to_numpy(dtype=float) * 50).astype(int),
+        0, 49
+    )
     gc_prob = np.bincount(G, minlength=50) / n
 
     return size_prob, gc_prob
@@ -97,8 +113,7 @@ def assign_probs_from_distributions(df: pd.DataFrame, size_prob: np.ndarray, gc_
     """If the intersected file lacks the probability columns, attach p_length and p_gc to each fragment from the whole genome's distributions."""
     df = df.copy()
     L = df["len"].to_numpy()
-    size_idx = np.where(L < 50, 0,
-                np.where(L >= 350, 59, ((L - 50)//5) + 1)).astype(int)
+    size_idx = np.where(L < 50,0,np.where(L >= 350, 61, ((L - 50) // 5) + 1)).astype(int)
     df["p_length"] = size_prob[size_idx]
 
     G = np.clip(np.floor(df["gc"].to_numpy() * 50).astype(int), 0, 49)
@@ -219,50 +234,108 @@ def run_bedtools_nuc_from_fragments(fragment_tsv: str, bedtools_bin: str, genome
 
 def parse_bedtools_nuc_gc(gcfile: str) -> pd.DataFrame:
     """
-    Parse bedtools nuc output and produce a DataFrame with:
-      chr, start, end, len, gc
-    GC column is detected by header name containing 'GC' (case-insensitive) with preference for exact 'GC' or 'pct_gc'.
+    Parse bedtools nuc output using its actual column headers.
+
+    Calculate GC fraction consistently, excluding N bases
+    where applicable. Discard fragments consisting entirely of Ns.
+
+    Returns:
+        chr, start, end, len, gc
     """
-    df = pd.read_csv(gcfile, sep="\t", comment="#", header=None, engine="c")
-
     with open(gcfile, "r") as fh:
-        header_line = None
-        for line in fh:
-            if line.startswith("#"):
-                continue
-            header_line = line.strip().split("\t")
-            break
+        header_line = fh.readline().strip()
 
-    df_coords = df.iloc[:, :3].copy()
-    df_coords.columns = ["chr","start","end"]
-    df_coords["start"] = df_coords["start"].astype(int)
-    df_coords["end"]   = df_coords["end"].astype(int)
-    df_coords = ensure_length_1based_inclusive(df_coords)
+    if not header_line.startswith("#"):
+        raise ValueError(
+            "Missing bedtools nuc header. Refusing to guess GC column."
+        )
 
-    gc_col_idx = None
-    if header_line is not None and any(re.search(r"[A-Za-z]", tok) for tok in header_line):
-        preferred = [i for i, tok in enumerate(header_line) if tok.lower() in ("gc", "pct_gc", "fraction_gc", "gc_content")]
-        if preferred:
-            gc_col_idx = preferred[0]
-        else:
-            cand = [i for i, tok in enumerate(header_line) if "gc" in tok.lower()]
-            if cand:
-                gc_col_idx = cand[0]
+    headers = [
+        re.sub(r"^\d+_", "", x.lstrip("#").strip().lower())
+        for x in header_line.split("\t")
+    ]
 
-    if gc_col_idx is None:
-        best_idx, best_score = None, -1
-        for i in range(3, min(df.shape[1], 20)):
-            s = pd.to_numeric(df.iloc[:, i], errors="coerce")
-            frac_01 = np.mean((s >= 0) & (s <= 1))
-            if frac_01 > best_score:
-                best_score, best_idx = frac_01, i
-        gc_col_idx = best_idx if best_idx is not None else 3
+    required = ["pct_gc", "num_c", "num_g", "num_n", "seq_len"]
 
-    gc_series = pd.to_numeric(df.iloc[:, gc_col_idx], errors="coerce")
-    out = df_coords.copy()
-    out["gc"] = gc_series.to_numpy()
+    missing = [x for x in required if x not in headers]
+    if missing:
+        raise ValueError(
+            f"Missing expected bedtools nuc columns: {missing}"
+        )
+
+    df = pd.read_csv(
+        gcfile,
+        sep="\t",
+        comment="#",
+        header=None
+    )
+
+    if df.empty:
+        raise ValueError("No fragment records found")
+
+    if df.shape[1] != len(headers):
+        raise ValueError(
+            "bedtools nuc header and data column counts differ"
+        )
+
+    def get_numeric(name):
+        idx = headers.index(name)
+        return pd.to_numeric(
+            df.iloc[:, idx],
+            errors="raise"
+        ).to_numpy(dtype=float)
+
+    pct_gc = get_numeric("pct_gc")
+    num_c = get_numeric("num_c")
+    num_g = get_numeric("num_g")
+    num_n = get_numeric("num_n")
+    seq_len = get_numeric("seq_len")
+
+    starts = pd.to_numeric(
+        df.iloc[:, 1], errors="raise"
+    ).to_numpy(dtype=int)
+
+    ends = pd.to_numeric(
+        df.iloc[:, 2], errors="raise"
+    ).to_numpy(dtype=int)
+
+    fragment_len = ends - starts
+
+    if not np.array_equal(fragment_len, seq_len):
+        raise ValueError(
+            "Fragment coordinates do not match sequence lengths"
+        )
+
+    if np.any(num_n > seq_len):
+        raise ValueError("N counts exceed fragment lengths")
+
+    # Exclude zero-length and entirely N-containing fragments.
+    keep = (seq_len > 0) & (num_n < seq_len)
+
+    # Match the original Perl handling of N-containing fragments.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        corrected_gc = (num_c + num_g) / (seq_len - num_n)
+
+    gc = np.where(num_n > 0, corrected_gc, pct_gc)
+
+    if not np.all(
+        np.isfinite(gc[keep])
+        & (gc[keep] >= 0)
+        & (gc[keep] <= 1)
+    ):
+        raise ValueError("Invalid GC fractions detected")
+
+    out = pd.DataFrame({
+        "chr": df.iloc[:, 0].to_numpy()[keep],
+        "start": starts[keep],
+        "end": ends[keep],
+        "len": fragment_len[keep],
+        "gc": gc[keep]
+    })
+
     out = filter_autosomes_X(out)
-    return out[["chr","start","end","len","gc"]]
+
+    return out[["chr", "start", "end", "len", "gc"]]
 
 def write_size_gc_summary(df: pd.DataFrame, outpath: str):
     """
