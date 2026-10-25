@@ -231,6 +231,5 @@ not bundled with the software.
 
 ## Citation
 
-Please cite the accompanying manuscript and the archived software release
-when using FRAGILE. The repository's Releases page identifies available
-software versions.
+Please cite the accompanying manuscript and the archived software release 
+when using FRAGILE. FRAGILE v1.0.0 is archived in Zenodo: https://doi.org/10.5281/zenodo.23636570
