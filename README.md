@@ -1,116 +1,236 @@
-# cfDNA Fragmentomics Analysis
+# FRAGILE
 
-This repository provides Python scripts for analyzing cell-free DNA (cfDNA) fragmentomics data. It includes a pipeline to compute the **FRAGILE** score (**FR**agment of **A**typical **G**C content, **I**rregular **L**ength, and **E**nd-motif enrichment score) for user-defined genomic contexts.
+FRAGILE score analyzes cell-free DNA fragmentation within user-defined genomic
+contexts. It comprises two complementary scores:
 
-## Script
-- **python_calculate_fragile.py**: Builds a per-sample whole-genome baseline from fragment coordinates, intersects one or more context BED files, and outputs:
-  - **FRAGILE.b** — body component from fragment length and GC probabilities  
-  - **FRAGILE.e** — end-sequence enrichment between context and baseline end-motif profiles
+- **FRAGILE.b** summarizes fragment-length and GC-content characteristics.
+- **FRAGILE.e** measures end-sequence enrichment relative to a sample-specific
+  whole-genome baseline.
 
-## Requirements
-- Python 3.8+
-- pandas, numpy, pysam
-- bedtools (for `bedtools nuc` and `bedtools intersect`)
-- Reference genome FASTA (indexed for both pysam and bedtools)
+This repository accompanies the manuscript:
 
-### Install Python packages
+**Cell-free DNA fragmentation patterns reveal functional contexts of their
+origin and capture age-associated variations**
+
+## Repository contents
+
+| Script | Analysis |
+|---|---|
+| `python_calculate_fragile.py` | Calculates FRAGILE.b and FRAGILE.e for genomic contexts. |
+| `python_machine_learning_fragile.py` | Trains a neural-network and random-forest ensemble to classify genomic contexts from FRAGILE scores. |
+| `python_global_aging_fragile.py` | Trains a global age-prediction model using nested cross-validation. |
+| `python_pathway_aging_fragile.py` | Evaluates pathway-specific residual aging signatures using a frozen global age-prediction model. |
+
+## Installation
+
+Clone the repository:
+
 ```bash
-python -m pip install pandas numpy pysam
+git clone https://github.com/as4184/cfDNA_enrichment_analysis.git
+cd cfDNA_enrichment_analysis
 ```
 
-## Inputs
-- **Fragments (TSV)**: one or more files via `--fragments` (comma, space, tab, or newline separated). Each file must have at least the first three columns:
-    ```
-    chr    start    end    ...
-    ```
-  Only the first three columns are read; extra columns are ignored. Fragment TSVs may be comma or tab separated, and outputs are tab separated.
+Create the environment using Micromamba:
 
-- **Features (BED)**: one or more files via `--features` (comma, space, tab, or newline separated). Each file must contain:
-    ```
-    chr    start    end    ...
-    ```
-
-- **Reference genome FASTA**: provided with `--genome`.
-
-## Usage
-1. Clone the repository:
-    ```bash
-    git clone /path/to/your_repo.git
-    ```
-2. Change directory:
-    ```bash
-    cd /path/to/your_repo
-    ```
-3. Run the pipeline with the required arguments.
-
-### Example 1: Single fragment + single feature
 ```bash
-python_calculate_fragile.py \
-  --fragments /path/to/sample.fragments.tsv \
-  --features  /path/to/housekeeping_TSS.bed \
-  --genome    /path/to/hg38.fa \
-  --outdir    /path/to/fragile_out \
-  --bedtools  /path/to/bedtools
+micromamba create -n fragile-release -f environment.yml
 ```
 
-### Example 2: One fragment + multiple features (comma OR whitespace separated)
+Alternatively, create the environment from the resolved package specification:
+
 ```bash
-python_calculate_fragile.py \
-  --fragments /path/to/sample.fragments.tsv \
-  --features  "/path/to/housekeeping_TSS.bed /path/to/housekeeping_CpG.bed /path/to/olfactory_TSS.bed" \
-  --feature-labels "HK_TSS HK_CpG OL_TSS" \
-  --genome   /path/to/hg38.fa \
-  --outdir   /path/to/fragile_out \
-  --bedtools /path/to/bedtools
+micromamba create -n fragile-release -f environment.resolved.yml
 ```
 
-### Example 3: Many fragments and features from newline-separated lists
+The environment includes Python, bedtools, and the Python dependencies
+required by the analysis scripts. The `requirements.lock.txt` file records
+Python package versions; it does not install Python or bedtools.
+
+The release environment was checked on Linux. Package availability may
+differ on other operating systems.
+
+Before execution, disable external Python package paths:
+
 ```bash
-python_calculate_fragile.py \
-  --fragments "$(tr '\n' ' ' < /path/to/frags.txt)" \
-  --features  "$(tr '\n' ' ' < /path/to/features.txt)" \
-  --feature-labels "$(tr '\n' ' ' < /path/to/feature_labels.txt)" \
-  --genome   /path/to/hg38.fa \
-  --outdir   /path/to/fragile_out \
-  --bedtools /path/to/bedtools
+unset PYTHONPATH PYTHONHOME
+export PYTHONNOUSERSITE=1
+export MPLBACKEND=Agg
 ```
 
-> `--feature-labels` must match the number and order of `--features`. Labels appear as the **Context** and in output filenames.
+Run the commands below from the repository directory.
 
-## Output
-For each `(sample, feature)` pair, the script writes:
+## Calculate FRAGILE scores
+
+### Required inputs
+
+1. **Fragment coordinates:** a table whose first three columns contain
+   chromosome, start, and end coordinates.
+2. **Genomic contexts:** one or more BED files defining the regions to analyze.
+3. **Reference genome:** a FASTA file matching the coordinate assembly and
+   chromosome naming used in the fragment and BED files.
+
+Fragment and BED coordinates must use the same 0-based, half-open
+coordinate convention. Reference genome and annotation files are supplied
+separately by the user.
+
+Example fragment coordinates:
+
+```text
+chr1	100000	100167
+chr1	100200	100350
+chr1	100400	100580
 ```
-/path/to/fragile_out/<sample>_<label>.fragile.tsv
+
+### Execution
+
+Replace the example input paths with the locations of the corresponding files:
+
+```bash
+micromamba run -n fragile-release \
+  python -I python_calculate_fragile.py \
+  --fragments sample.fragments.tsv \
+  --features contexts.bed \
+  --feature-labels context \
+  --genome hg38.fa \
+  --outdir results/fragile
 ```
-with columns:
-- **Sample_ID**
-- **Context**
-- **FRAGILE.b**
-- **FRAGILE.e**
 
-## Brief Method
-- **Length binning (62 bins total)**:
-  - bin 0: `<50 bp`
-  - bins 1–60: `50–349 bp` in 5-bp intervals
-  - bin 61: `≥350 bp`
-  
-- **GC binning (50 bins total)**:
-  - divide `[0,1]` into 50 bins of width `0.02`
-  - for a GC fraction `g` in `[0,1]`, the bin index is `b = min(49, floor(50*g))`
+Multiple contexts can be supplied together:
 
-- **Chromosome filtering**: keep `chr1 to chr22` and `chrX`; exclude `chrM`, `chrY`, and any contig with `_`.
+```bash
+micromamba run -n fragile-release \
+  python -I python_calculate_fragile.py \
+  --fragments sample.fragments.tsv \
+  --features "TSS.bed CpG_islands.bed" \
+  --feature-labels "TSS CpG" \
+  --genome hg38.fa \
+  --outdir results/fragile
+```
 
-- **End-motifs**: 7-nt windows on both ends labeled `L1 to L7` (left) and `R1 to R7` (right).
+Feature labels must match the number and order of the supplied BED files.
 
-### FRAGILE.b (fragment body component)
-- $W_{improbability}=\sum_{n=1}^{N}\log_{2}\left(\frac{1}{P_{size}\times P_{GC}}\right)$
-- $W_{probability}=\sum_{n=1}^{N}\log_{2}\left(\frac{1}{\left(1-P_{size}\right)\times\left(1-P_{GC}\right)}\right)$
-- $\mathrm{FRAGILE}.b\ \mathrm{score}=\frac{W_{improbability}}{W_{probability}+W_{improbability}}$
+The calculation retains chromosomes chr1–chr22 and chrX and excludes
+chrM, chrY, and contigs containing an underscore.
 
-### FRAGILE.e (fragment end-sequence component)
-Build A/T/G/C counts at positions `L1 to L7, R1 to R7` for the context and the whole genome baseline, normalize per position, and sum:
-- $\mathrm{FRAGILE}.e\ \mathrm{score}=\sum_{i=1}^{14}\sum_{j=1}^{4}P_{i,j}(k)\log_{2}\left(\frac{P_{i,j}(k)}{q_{i,j}}\right)$
+### Outputs
 
+The script produces tab-separated results for each sample and context,
+with the following columns:
+
+| Column | Description |
+|---|---|
+| `Sample_ID` | Sample identifier |
+| `Context` | Genomic-context label |
+| `FRAGILE.b` | Fragment-body score |
+| `FRAGILE.e` | Fragment-end score |
+
+## Genomic-context classification
+
+Provide a table containing `Sample_ID`, `Context`, `FRAGILE.b`, and
+`FRAGILE.e`:
+
+```bash
+micromamba run -n fragile-release \
+  python -I python_machine_learning_fragile.py \
+  --input context_scores.fragile.tsv
+```
+
+This script trains a neural-network and random-forest ensemble using
+the supplied context labels.
+
+## Global age prediction
+
+Provide a tab-separated training table containing:
+
+```text
+Sample_ID
+Age
+CpG_FRAGILE.b
+CpG_FRAGILE.e
+TSS_FRAGILE.b
+TSS_FRAGILE.e
+```
+
+Each sample occupies one row, with these fields as columns.
+
+```bash
+micromamba run -n fragile-release \
+  python -I python_global_aging_fragile.py \
+  --input global_training.tsv \
+  --outdir results/global_aging \
+  --seed 42 \
+  --outer-folds 10 \
+  --iters 70 \
+  --jobs 1
+```
+
+The analysis performs nested cross-validation for model selection and
+fits a final global age-prediction model.
+
+## Pathway-specific aging analysis
+
+This analysis requires:
+
+- A fitted global age-prediction model in Joblib format.
+- Out-of-fold global age predictions with columns `Sample_ID` and
+  `Age_global_oof`.
+- Global FRAGILE features with columns `Sample_ID`, `CpG_FRAGILE.b`,
+  `CpG_FRAGILE.e`, `TSS_FRAGILE.b`, and `TSS_FRAGILE.e`.
+- A pathway feature table containing `Sample_ID`, `Age`, and pathway-specific
+  FRAGILE measurements. Pathway column names must follow the naming convention
+  used by the script, including the `_CpG_FRAGILE.b` suffix.
+
+```bash
+micromamba run -n fragile-release \
+  python -I python_pathway_aging_fragile.py \
+  --model global_model.joblib \
+  --age-oof age_global_oof.tsv \
+  --global global_features.tsv \
+  --pathway pathway_features.tsv \
+  --outdir results/pathway_aging \
+  --seed 42 \
+  --outer-folds 10 \
+  --iters 100 \
+  --jobs 1
+```
+
+Sample identifiers must correspond across the input tables. Use the fitted
+model and out-of-fold predictions generated by the global aging analysis.
+
+PDF-to-image conversion optionally requires `pdf2image` and Poppler.
+These dependencies are not included in the core environment.
+
+## Command-line reference
+
+Each script provides a help message describing its command-line options:
+
+```bash
+micromamba run -n fragile-release \
+  python -I python_calculate_fragile.py --help
+
+micromamba run -n fragile-release \
+  python -I python_machine_learning_fragile.py --help
+
+micromamba run -n fragile-release \
+  python -I python_global_aging_fragile.py --help
+
+micromamba run -n fragile-release \
+  python -I python_pathway_aging_fragile.py --help
+```
+
+## Reproducibility
+
+The repository provides version-pinned environment specifications and
+explicit random-seed options for the aging analyses. Preserve input
+tables, reference resources, command-line arguments, and software versions
+when reproducing an analysis.
+
+Model results may vary across hardware, numerical libraries, and parallel
+execution settings. Input sequencing data and reference annotations are
+not bundled with the software.
 
 ## Citation
-If this software is useful in your work, please cite this repository and any associated publication (upcoming).
+
+Please cite the accompanying manuscript and the archived software release
+when using FRAGILE. The repository's Releases page identifies available
+software versions.
